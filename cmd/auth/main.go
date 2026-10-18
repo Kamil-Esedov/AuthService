@@ -70,7 +70,7 @@ func main() {
 		}
 	}()
 
-	logger.Info("http server started on :8080")
+	logger.Info("http server started on", zap.Int("port", cfg.AppPort))
 
 	ctxApp, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

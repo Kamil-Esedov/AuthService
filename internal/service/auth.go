@@ -15,18 +15,18 @@ type Postgres interface {
 	GetByEmail(ctx context.Context, user *domain.User) (*domain.User, error)
 }
 
-type PasswordHahser interface {
+type PasswordHasher interface {
 	Hash(password string) (string, error)
 	Compare(password, hash string) bool
 }
 
 type AuthService struct {
 	postgres       Postgres
-	passwordHasher PasswordHahser
+	passwordHasher PasswordHasher
 	logger         *zap.Logger
 }
 
-func NewAuthService(postgres Postgres, passwordHasher PasswordHahser, logger *zap.Logger) *AuthService {
+func NewAuthService(postgres Postgres, passwordHasher PasswordHasher, logger *zap.Logger) *AuthService {
 	return &AuthService{
 		postgres:       postgres,
 		passwordHasher: passwordHasher,
@@ -81,7 +81,3 @@ func (s *AuthService) Login(ctx context.Context, data domain.LoginInput) (*domai
 
 	return user, nil
 }
-
-// func (s *AuthService) Refresh(ctx context.Context, refreshToken string, userAgent string, ip string)
-
-// func (s *AuthService) Logout(ctx context.Context, refreshToken string) error

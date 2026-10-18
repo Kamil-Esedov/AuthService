@@ -16,7 +16,7 @@ import (
 
 /*
 	POST /api/v1/auth/register	регистрация
-	POST /api/v1/auth/lohin		вход
+	POST /api/v1/auth/login		вход
 	POST /api/v1/auth/refresh	обновление токенов
 	POST /api/v1/auth/logout	завершение сессии
 	GET /api/v1/users/me		данные текущего пользователя

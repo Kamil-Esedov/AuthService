@@ -26,10 +26,10 @@ type LoginResponseDTO struct {
 }
 
 type UserResponseDTO struct {
-	ID         uuid.UUID
-	Email      string
-	Role       domain.Role
-	IsVerified bool
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	ID         uuid.UUID   `json:"id"`
+	Email      string      `json:"email"`
+	Role       domain.Role `json:"role"`
+	IsVerified bool        `json:"is_verified"`
+	CreatedAt  time.Time   `json:"created_at"`
+	UpdatedAt  time.Time   `json:"updated_at"`
 }
