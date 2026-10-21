@@ -11,16 +11,17 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/google/uuid"
-	"go.uber.org/zap"
 )
 
+const queryTimeout = 5 * time.Second
+
 func (p *Postgres) Register(ctx context.Context, user *domain.User) (uuid.UUID, error) {
-	ctxTimeout, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctxTimeout, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
 	query := `
-		INSERT INTO users (email, password_hash)
-		VALUES ($1, $2) RETURNING id;
+		INSERT INTO users (email, password_hash, role)
+		VALUES ($1, $2, $3) RETURNING id;
 	`
 
 	if err := p.db.QueryRow(
@@ -28,100 +29,38 @@ func (p *Postgres) Register(ctx context.Context, user *domain.User) (uuid.UUID, 
 		query,
 		user.Email,
 		user.PasswordHash,
+		user.Role,
 	).Scan(&user.ID); err != nil {
-		if errors.Is(err, context.Canceled) {
-			return uuid.Nil, &domain.AppError{
-				Code:    "ErrContextCanceled",
-				Message: "context canceled by client",
-				Status:  499,
-				Cause:   err,
-			}
-		}
-
-		if errors.Is(err, context.DeadlineExceeded) {
-			p.logger.Error(
-				"postgres query timeout",
-				zap.String("operation", "register user"),
-				zap.Duration("timeout", 5*time.Second),
-				zap.Error(err),
-			)
-
-			return uuid.Nil, &domain.AppError{
-				Code:    "ErrTimeout",
-				Message: "database query timed out",
-				Status:  http.StatusGatewayTimeout,
-				Cause:   err,
-			}
-		}
-
-		if errors.Is(err, pgx.ErrNoRows) {
-			p.logger.Error(
-				"postgres insert returned no user ID",
-				zap.String("operation", "register user"),
-				zap.Error(err),
-			)
-
-			return uuid.Nil, domain.NewErrInternal(err)
-		}
-
 		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) {
-			switch pgErr.Code {
-			case "23505":
-				return uuid.Nil, &domain.AppError{
-					Code:    "ErrEmailTaken",
-					Message: "email is already taken",
-					Status:  http.StatusConflict,
-					Cause:   err,
-				}
-			case "23503":
-				p.logger.Error(
-					"foreign key violation",
-					zap.String("operation", "register user"),
-					zap.String("constraint", pgErr.ConstraintName),
-					zap.Error(err),
-				)
-
-				return uuid.Nil, domain.NewErrInternal(err)
-			default:
-				p.logger.Error(
-					"postgres query failed",
-					zap.String("operation", "register user"),
-					zap.String("code", string(pgErr.Code)),
-					zap.String("constraint", pgErr.ConstraintName),
-					zap.Error(err),
-				)
-
-				return uuid.Nil, domain.NewErrInternal(err)
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return uuid.Nil, &domain.AppError{
+				Code:    "ErrEmailTaken",
+				Message: "email is already taken",
+				Status:  http.StatusConflict,
+				Cause:   err,
 			}
 		}
-
-		p.logger.Error(
-			"postgres query failed",
-			zap.String("operation", "register user"),
-			zap.Error(err),
-		)
-
-		return uuid.Nil, domain.NewErrInternal(err)
+		return uuid.Nil, p.handleError("register user", err)
 	}
 
 	return user.ID, nil
 }
 
-func (p *Postgres) GetByEmail(ctx context.Context, user *domain.User) (*domain.User, error) {
-	ctxTimeout, cancel := context.WithTimeout(ctx, 5*time.Second)
+func (p *Postgres) GetByEmail(ctx context.Context, email string) (*domain.User, error) {
+	ctxTimeout, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
 	query := `
 		SELECT id, email, password_hash, role, is_verified, is_blocked, created_at, updated_at 
-			FROM users
+		FROM users
 		WHERE email = $1;
 	`
 
+	var user domain.User
 	if err := p.db.QueryRow(
 		ctxTimeout,
 		query,
-		user.Email,
+		email,
 	).Scan(
 		&user.ID,
 		&user.Email,
@@ -134,59 +73,52 @@ func (p *Postgres) GetByEmail(ctx context.Context, user *domain.User) (*domain.U
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, &domain.AppError{
-				Code:    "ErrUnauthorized",
-				Message: "incorrect email or password",
-				Status:  http.StatusUnauthorized,
+				Code:    "ErrUserNotFound",
+				Message: "user not found",
+				Status:  http.StatusNotFound,
 				Cause:   err,
 			}
 		}
 
-		if errors.Is(err, context.Canceled) {
-			return nil, &domain.AppError{
-				Code:    "ErrContextCanceled",
-				Message: "context canceled by client",
-				Status:  499,
-				Cause:   err,
-			}
-		}
-
-		if errors.Is(err, context.DeadlineExceeded) {
-			p.logger.Error(
-				"postgres query timeout",
-				zap.String("operation", "get user by email"),
-				zap.Duration("timeout", 5*time.Second),
-				zap.Error(err),
-			)
-
-			return nil, &domain.AppError{
-				Code:    "ErrTimeout",
-				Message: "database query timed out",
-				Status:  http.StatusGatewayTimeout,
-				Cause:   err,
-			}
-		}
-
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) {
-			p.logger.Error(
-				"postgres query failed",
-				zap.String("operation", "get user by email"),
-				zap.String("code", string(pgErr.Code)),
-				zap.String("constraint", pgErr.ConstraintName),
-				zap.Error(err),
-			)
-
-			return nil, domain.NewErrInternal(err)
-		}
-
-		p.logger.Error(
-			"postgres query failed",
-			zap.String("operation", "get user by email"),
-			zap.Error(err),
-		)
-
-		return nil, domain.NewErrInternal(err)
+		return nil, p.handleError("get user by email", err)
 	}
 
-	return user, nil
+	return &user, nil
+}
+
+func (p *Postgres) GetByID(ctx context.Context, userID uuid.UUID) (*domain.User, error) {
+	ctxTimeout, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+
+	query := `
+		SELECT id, email, password_hash, role, is_verified, is_blocked, created_at, updated_at
+		FROM users
+		WHERE id = $1;
+	`
+
+	var user domain.User
+	err := p.db.QueryRow(ctxTimeout, query, userID).Scan(
+		&user.ID,
+		&user.Email,
+		&user.PasswordHash,
+		&user.Role,
+		&user.IsVerified,
+		&user.IsBlocked,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, &domain.AppError{
+				Code:    "ErrUserNotFound",
+				Message: "user not found",
+				Status:  http.StatusNotFound,
+				Cause:   err,
+			}
+		}
+
+		return nil, p.handleError("get user by id", err)
+	}
+
+	return &user, nil
 }

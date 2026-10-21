@@ -9,20 +9,29 @@ import (
 
 type RegisterRequestDTO struct {
 	Email    string `json:"email" validate:"required,email"`
-	Password string `json:"password" validate:"required,min=8"`
+	Password string `json:"password" validate:"required,min=8,max=72"`
 }
 
 type LoginRequestDTO struct {
 	Email    string `json:"email" validate:"required,email"`
-	Password string `json:"password" validate:"required,min=8"`
+	Password string `json:"password" validate:"required"`
 }
 
 type RegisterResponseDTO struct {
 	ID uuid.UUID `json:"id"`
 }
 
-type LoginResponseDTO struct {
-	User UserResponseDTO `json:"user"`
+type TokenPairResponseDTO struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+}
+
+type RefreshRequestDTO struct {
+	RefreshToken string `json:"refresh_token" validate:"required"`
+}
+
+type LogoutRequestDTO struct {
+	RefreshToken string `json:"refresh_token" validate:"required"`
 }
 
 type UserResponseDTO struct {
