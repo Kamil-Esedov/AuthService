@@ -6,6 +6,7 @@ import (
 	"auth-service/internal/storage/postgres"
 	httpTransport "auth-service/internal/transport/http"
 	"auth-service/pkg/hash"
+	"auth-service/pkg/jwt"
 	"auth-service/pkg/logger"
 	"context"
 	"log"
@@ -16,7 +17,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/go-playground/validator"
+	"github.com/go-playground/validator/v10"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
@@ -43,15 +44,28 @@ func main() {
 	hasher := hash.NewBcryptHasher(cfg.HashCost)
 	validator := validator.New()
 
+	tokenManager, err := jwt.NewManager(cfg.JWTSecret)
+	if err != nil {
+		logger.Fatal("secret key is not set")
+	}
+
 	postgres := postgres.NewPostgres(dbpool, logger)
-	authService := service.NewAuthService(postgres, hasher, logger)
+	authService := service.NewAuthService(tokenManager, time.Minute*time.Duration(cfg.AccessTokenTTL), time.Hour*time.Duration(cfg.RefreshTokenTTL), postgres, hasher, logger)
 	httpTransport := httpTransport.NewTransportHTTP(authService, validator, logger)
 
 	router := chi.NewRouter()
 
-	router.Route("/api/v1/auth", func(r chi.Router) {
+	router.Route("/api/auth", func(r chi.Router) {
 		r.Post("/register", httpTransport.RegisterUser)
 		r.Post("/login", httpTransport.LoginUser)
+		r.Post("/refresh", httpTransport.RefreshTokens)
+		r.Post("/logout", httpTransport.LogoutUser)
+	})
+
+	router.Group(func(r chi.Router) {
+		r.Use(httpTransport.AuthMiddleware)
+
+		r.Get("/api/users/me", httpTransport.GetMe)
 	})
 
 	srv := &http.Server{

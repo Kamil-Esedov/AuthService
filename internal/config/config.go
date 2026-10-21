@@ -9,20 +9,26 @@ import (
 )
 
 type Config struct {
-	gRPCserverPort int
-	DatabaseURL    string
-	HashCost       int
-	AppPort        int
+	gRPCserverPort  int
+	DatabaseURL     string
+	HashCost        int
+	AppPort         int
+	JWTSecret       string
+	AccessTokenTTL  int
+	RefreshTokenTTL int
 }
 
 func MustLoad() *Config {
 	_ = godotenv.Load()
 
 	cfg := &Config{
-		gRPCserverPort: getEnvAsInt("GRPC_PORT", 50051),
-		DatabaseURL:    getEnvRequired("DB_URL"),
-		HashCost:       getEnvAsInt("HASH_COST", 10),
-		AppPort:        getEnvAsInt("APP_PORT", 8080),
+		gRPCserverPort:  getEnvAsInt("GRPC_PORT", 50051),
+		DatabaseURL:     getEnvRequired("DB_URL"),
+		HashCost:        getEnvAsInt("HASH_COST", 10),
+		AppPort:         getEnvAsInt("APP_PORT", 8080),
+		JWTSecret:       getEnvRequired("JWT_SECRET"),
+		AccessTokenTTL:  getEnvAsInt("ACCESS_TOKEN_TTL", 15),
+		RefreshTokenTTL: getEnvAsInt("REFRESH_TOKEN_TTL", 720),
 	}
 
 	return cfg
