@@ -52,7 +52,7 @@ func (m *Manager) NewAccessToken(userID, role string, ttl time.Duration) (string
 
 func (m *Manager) Parse(accessToken string) (*CustomClaims, error) {
 	token, err := jwt.ParseWithClaims(accessToken, &CustomClaims{}, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+		if t.Method != jwt.SigningMethodHS256 {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 		}
 		return m.signingKey, nil
