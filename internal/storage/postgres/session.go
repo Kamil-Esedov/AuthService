@@ -20,7 +20,7 @@ func (p *Postgres) CreateSession(ctx context.Context, session *domain.Session) e
 		VALUES ($1, $2, $3, $4, $5, $6);
 	`
 
-	_, err := p.db.Query(
+	_, err := p.db.Exec(
 		ctxTimeout,
 		query,
 		session.ID,
@@ -36,6 +36,7 @@ func (p *Postgres) CreateSession(ctx context.Context, session *domain.Session) e
 
 	return nil
 }
+
 func (p *Postgres) GetSessionByTokenHash(ctx context.Context, tokenHash string) (*domain.Session, error) {
 	ctxTimeout, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -93,6 +94,61 @@ func (p *Postgres) DeleteSession(ctx context.Context, sessionID uuid.UUID) error
 			Message: "session not found or already deleted",
 			Status:  http.StatusNotFound,
 		}
+	}
+
+	return nil
+}
+
+func (p *Postgres) RotateSession(ctx context.Context, oldSession uuid.UUID, newSession *domain.Session) error {
+	txCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	tx, err := p.db.Begin(txCtx)
+	if err != nil {
+		return p.handleError("begin session rotation", err)
+	}
+	defer tx.Rollback(txCtx)
+
+	deleteQuery := `
+		DELETE FROM refresh_sessions
+		WHERE id = $1 AND expires_at > NOW();
+	`
+
+	deleteTag, err := tx.Exec(txCtx, deleteQuery, oldSession)
+	if err != nil {
+		return p.handleError("delete old session", err)
+	}
+
+	if deleteTag.RowsAffected() != 1 {
+		return &domain.AppError{
+			Code:    "ErrUnauthorized",
+			Message: "refresh session is expired or already rotated",
+			Status:  http.StatusUnauthorized,
+		}
+	}
+
+	createQuery := `
+		INSERT INTO refresh_sessions
+			(id, user_id, token_hash, user_agent, ip, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6);
+	`
+
+	_, err = tx.Exec(
+		txCtx,
+		createQuery,
+		newSession.ID,
+		newSession.UserID,
+		newSession.TokenHash,
+		newSession.UserAgent,
+		newSession.IP,
+		newSession.ExpiresAt,
+	)
+	if err != nil {
+		return p.handleError("create new session", err)
+	}
+
+	if err := tx.Commit(txCtx); err != nil {
+		return p.handleError("commit session rotation", err)
 	}
 
 	return nil

@@ -23,6 +23,7 @@ type Postgres interface {
 	CreateSession(ctx context.Context, session *domain.Session) error
 	GetSessionByTokenHash(ctx context.Context, tokenHash string) (*domain.Session, error)
 	DeleteSession(ctx context.Context, sessionID uuid.UUID) error
+	RotateSession(ctx context.Context, oldSession uuid.UUID, newSession *domain.Session) error
 }
 
 type PasswordHasher interface {
@@ -123,23 +124,27 @@ func (s *AuthService) Login(ctx context.Context, data domain.LoginInput) (*domai
 		ip = netip.IPv4Unspecified()
 	}
 
-	return s.issueTokens(ctx, user, data.UserAgent, ip)
+	tokens, session, err := s.issueTokens(user, data.UserAgent, ip)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.postgres.CreateSession(ctx, session); err != nil {
+		return nil, err
+	}
+
+	return tokens, nil
 }
 
 func (s *AuthService) Refresh(ctx context.Context, refreshToken, userAgent, rawID string) (*domain.TokenPair, error) {
 	tokenHash := hashToken(refreshToken)
 
-	session, err := s.postgres.GetSessionByTokenHash(ctx, tokenHash)
+	oldSession, err := s.postgres.GetSessionByTokenHash(ctx, tokenHash)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := s.postgres.DeleteSession(ctx, session.ID); err != nil {
-		s.logger.Error("failed to delete old session", zap.Error(err))
-		return nil, domain.NewErrInternal(err)
-	}
-
-	if time.Now().After(session.ExpiresAt) {
+	if time.Now().After(oldSession.ExpiresAt) {
 		return nil, &domain.AppError{
 			Code:    "ErrUnauthorized",
 			Message: "refresh token expired",
@@ -147,7 +152,7 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken, userAgent, rawI
 		}
 	}
 
-	user, err := s.postgres.GetByID(ctx, session.UserID)
+	user, err := s.postgres.GetByID(ctx, oldSession.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -162,10 +167,19 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken, userAgent, rawI
 
 	ip, err := netip.ParseAddr(rawID)
 	if err != nil {
-		ip = session.IP
+		ip = oldSession.IP
 	}
 
-	return s.issueTokens(ctx, user, userAgent, ip)
+	tokens, newSession, err := s.issueTokens(user, userAgent, ip)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := s.postgres.RotateSession(ctx, oldSession.ID, newSession); err != nil {
+		return nil, err
+	}
+
+	return tokens, nil
 }
 
 func (s *AuthService) Logout(ctx context.Context, refreshToken string) error {
@@ -205,17 +219,17 @@ func (s *AuthService) ParseToken(accessToken string) (*jwt.CustomClaims, error) 
 	return claims, nil
 }
 
-func (s *AuthService) issueTokens(ctx context.Context, user *domain.User, userAgent string, ip netip.Addr) (*domain.TokenPair, error) {
+func (s *AuthService) issueTokens(user *domain.User, userAgent string, ip netip.Addr) (*domain.TokenPair, *domain.Session, error) {
 	accessToken, err := s.tokenManager.NewAccessToken(user.ID.String(), string(user.Role), s.accessTTL)
 	if err != nil {
 		s.logger.Error("failed to generate access token", zap.Error(err))
-		return nil, domain.NewErrInternal(err)
+		return nil, nil, domain.NewErrInternal(err)
 	}
 
 	refreshToken, err := s.tokenManager.NewRefreshToken()
 	if err != nil {
 		s.logger.Error("failed to generate refresh token", zap.Error(err))
-		return nil, domain.NewErrInternal(err)
+		return nil, nil, domain.NewErrInternal(err)
 	}
 
 	now := time.Now()
@@ -229,15 +243,10 @@ func (s *AuthService) issueTokens(ctx context.Context, user *domain.User, userAg
 		CreatedAt: now,
 	}
 
-	if err := s.postgres.CreateSession(ctx, session); err != nil {
-		s.logger.Error("failed to save session", zap.Error(err))
-		return nil, err
-	}
-
 	return &domain.TokenPair{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
-	}, nil
+	}, session, nil
 }
 
 func hashToken(token string) string {
