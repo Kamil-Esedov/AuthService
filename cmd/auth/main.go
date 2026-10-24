@@ -9,6 +9,7 @@ import (
 	"auth-service/pkg/jwt"
 	"auth-service/pkg/logger"
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os/signal"
@@ -30,8 +31,16 @@ func main() {
 		log.Fatal("failed to init logger. Error: ", err)
 	}
 
+	dbURL := fmt.Sprintf(
+		"postgres://%s:%s@%s:5432/%s?sslmode=disable",
+		cfg.PostgresUser,
+		cfg.PostgresPassword,
+		cfg.PostgresHost,
+		cfg.PostgresDB,
+	)
+
 	ctx := context.Background()
-	dbpool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	dbpool, err := pgxpool.New(ctx, dbURL)
 	if err != nil {
 		logger.Fatal("failed to open pool", zap.Error(err))
 	}
