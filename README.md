@@ -21,7 +21,8 @@
 - Docker Compose;
 - chi для HTTP-маршрутизации;
 - gRPC и Protocol Buffers;
-- JWT и bcrypt.
+- JWT и bcrypt;
+- zap logger.
 
 ## Быстрый запуск
 
