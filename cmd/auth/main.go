@@ -1,9 +1,11 @@
 package main
 
 import (
+	authv1 "auth-service/gen/auth/v1"
 	"auth-service/internal/config"
 	"auth-service/internal/service"
 	"auth-service/internal/storage/postgres"
+	grpcTransport "auth-service/internal/transport/grpc"
 	httpTransport "auth-service/internal/transport/http"
 	"auth-service/pkg/hash"
 	"auth-service/pkg/jwt"
@@ -11,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os/signal"
 	"strconv"
@@ -21,6 +24,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 )
 
 func main() {
@@ -30,6 +34,7 @@ func main() {
 	if err != nil {
 		log.Fatal("failed to init logger. Error: ", err)
 	}
+	defer logger.Sync()
 
 	dbURL := fmt.Sprintf(
 		"postgres://%s:%s@%s:%d/%s?sslmode=disable",
@@ -56,12 +61,13 @@ func main() {
 
 	tokenManager, err := jwt.NewManager(cfg.JWTSecret)
 	if err != nil {
-		logger.Fatal("secret key is not set")
+		logger.Fatal("secret key is not set", zap.Error(err))
 	}
 
 	postgres := postgres.NewPostgres(dbpool, logger)
 	authService := service.NewAuthService(tokenManager, time.Minute*time.Duration(cfg.AccessTokenTTL), time.Hour*time.Duration(cfg.RefreshTokenTTL), postgres, hasher, logger)
 	httpTransport := httpTransport.NewTransportHTTP(authService, validator, logger)
+	grpcTransport := grpcTransport.NewTransportGRPC(authService, validator, logger)
 
 	router := chi.NewRouter()
 
@@ -71,7 +77,6 @@ func main() {
 		r.Post("/refresh", httpTransport.RefreshTokens)
 		r.Post("/logout", httpTransport.LogoutUser)
 	})
-
 	router.Group(func(r chi.Router) {
 		r.Use(httpTransport.AuthMiddleware)
 
@@ -87,20 +92,33 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error("failed to start http server", zap.Error(err))
-			panic(err)
-		}
-	}()
-
-	logger.Info("http server started on", zap.Int("port", cfg.AppPort))
+	grpcListener, err := net.Listen("tcp", ":"+strconv.Itoa(cfg.GRPCPort))
+	if err != nil {
+		logger.Fatal("failed to listen for gRPC", zap.Int("port", cfg.GRPCPort), zap.Error(err))
+	}
+	grpcServer := grpc.NewServer()
+	authv1.RegisterAuthServiceServer(grpcServer, grpcTransport)
 
 	ctxApp, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	<-ctxApp.Done()
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("HTTP server stopped unexpectedly", zap.Error(err))
+			stop()
+		}
+	}()
+	go func() {
+		if err := grpcServer.Serve(grpcListener); err != nil && err != grpc.ErrServerStopped {
+			logger.Error("gRPC server stopped unexpectedly", zap.Error(err))
+			stop()
+		}
+	}()
 
+	logger.Info("http server started", zap.Int("port", cfg.AppPort))
+	logger.Info("gRPC server started", zap.Int("port", cfg.GRPCPort))
+
+	<-ctxApp.Done()
 	logger.Info("shutdown signal received")
 
 	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)

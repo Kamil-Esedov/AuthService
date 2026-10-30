@@ -9,7 +9,7 @@ import (
 )
 
 type Config struct {
-	gRPCserverPort   int
+	GRPCPort         int
 	HashCost         int
 	AppPort          int
 	JWTSecret        string
@@ -32,7 +32,7 @@ func MustLoad() *Config {
 	}
 
 	cfg := &Config{
-		gRPCserverPort:   getEnvAsInt("GRPC_PORT", 50051),
+		GRPCPort:         getEnvAsInt("GRPC_PORT", 50051),
 		HashCost:         getEnvAsInt("HASH_COST", 10),
 		AppPort:          getEnvAsInt("APP_PORT", 8080),
 		JWTSecret:        getEnvRequired("JWT_SECRET"),
