@@ -45,6 +45,7 @@ services:
     environment:
       - HASH_COST=${HASH_COST}
       - APP_PORT=${APP_PORT}
+      - GRPC_PORT=${GRPC_PORT}
       - JWT_SECRET=${JWT_SECRET}
       - ACCESS_TOKEN_TTL=${ACCESS_TOKEN_TTL}
       - REFRESH_TOKEN_TTL=${REFRESH_TOKEN_TTL}
@@ -55,6 +56,7 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
     ports:
       - ${APP_PORT}:${APP_PORT}
+      - ${GRPC_PORT}:${GRPC_PORT}
     volumes:
       - ./logs:/app/logs:z
     extra_hosts:
